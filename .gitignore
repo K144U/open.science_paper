@@ -1,0 +1,27 @@
+# Model weights are distributed out of band, not through git.
+# The 50M checkpoints are 194 MB each, past GitHub's 100 MB per-file limit.
+*.pt
+*.ckpt
+*.safetensors
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# LaTeX build products (main.tex and main.pdf are tracked)
+paper/*.aux
+paper/*.log
+paper/*.out
+paper/*.xdv
+paper/*.bbl
+paper/*.blg
+paper/*.synctex.gz
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

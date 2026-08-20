@@ -1,0 +1,39 @@
+#!/bin/bash
+# Project B - eval-only loops-vs-length on a trained checkpoint (eval_loops.py).
+# ARGS = colon-separated CLI args (':' -> space; NO commas -- qsub -v eats them,
+# so rely on eval_loops.py's default --lengths).
+#   qsub -v ARGS="--task:s5:--ckpt:runs/s5_curr32_5m/ckpt_final.pt:--out:runs/s5_curr32_5m/loops_vs_length.json" \
+#        scripts/run_projB_eval.pbs
+#PBS -q gpu
+#PBS -l select=1:ncpus=8
+#PBS -l walltime=2:00:00
+#PBS -N projB_eval
+#PBS -j oe
+#PBS -o ${REPO}/pbs_logs/projB_eval.pbs.out
+
+set -uo pipefail
+REPO=${REPO:-$(pwd)}
+cd "$REPO"; mkdir -p pbs_logs
+
+source /cm/shared/apps/anaconda3/etc/profile.d/conda.sh
+conda activate "$REPO/.conda/envs/loopedlm"
+export PYTHONNOUSERSITE=1 TOKENIZERS_PARALLELISM=false
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export MIN_FREE_MIB="${MIN_FREE_MIB:-10000}"
+
+ARGS="${ARGS:?set ARGS=colon-separated eval_loops.py args}"
+# Wait (up to 6h) for a qualifying GPU instead of silently running on CPU.
+CVD=""
+for _ in $(seq 1 72); do
+    CVD=$(bash scripts/pick_gpu.sh 1) && [ -n "$CVD" ] && break
+    echo "no GPU with >=${MIN_FREE_MIB}MiB free; retrying in 300s"
+    sleep 300
+done
+[ -n "$CVD" ] || { echo "FATAL: no GPU freed up within 6h"; exit 1; }
+export CUDA_VISIBLE_DEVICES="$CVD"
+echo "host=$(hostname) gpu=$CUDA_VISIBLE_DEVICES"
+nvidia-smi --query-gpu=index,memory.free --format=csv,noheader
+
+python code/projB/eval_loops.py $(echo "$ARGS" | tr ':' ' ') 2>&1 \
+    | tee pbs_logs/projB_eval_run.log
+echo "===== eval done ====="

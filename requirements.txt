@@ -1,0 +1,8 @@
+# Reproducing figures and numbers from runs/ needs only these two:
+numpy>=1.24
+matplotlib>=3.7
+
+# Retraining, evaluation, and probing additionally need PyTorch.
+# Install the build matching your CUDA version from https://pytorch.org
+# (the study ran on torch 2.x with bf16 autocast on A100s).
+torch>=2.0

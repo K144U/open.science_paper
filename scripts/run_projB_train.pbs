@@ -1,0 +1,52 @@
+#!/bin/bash
+# Project B — one training run (or an 'x'-separated batch of runs) on 1 GPU.
+# Each run is a full train.py invocation given as CLI-arg string with ':'
+# separating args (qsub -v splits on commas; ':' avoids both ',' and space).
+# Multiple runs are separated by '@' (NOT 'x' — 'x' occurs inside out-paths
+# like "fixedn" and would split them).  Do not pass --eval-lengths here (its
+# value has commas, which qsub -v eats); use the train.py default.
+#   qsub -v RUNS="--task:s5:--preset:5m:--steps:3000:--seed:0:--out:runs/gate_s5_s0" \
+#        scripts/run_projB_train.pbs
+#   qsub -v RUNS="<run1>@<run2>@<run3>" ...   # sequential runs, one GPU
+# Small models (5-50M) — MIN_FREE_MIB default 10000 is plenty.
+#PBS -q gpu
+#PBS -l select=1:ncpus=8
+#PBS -l walltime=10:00:00
+#PBS -N projB_train
+#PBS -j oe
+#PBS -o ${REPO}/pbs_logs/projB_train.pbs.out
+
+set -uo pipefail
+REPO=${REPO:-$(pwd)}
+cd "$REPO"; mkdir -p pbs_logs runs
+
+source /cm/shared/apps/anaconda3/etc/profile.d/conda.sh
+conda activate "$REPO/.conda/envs/loopedlm"
+export PYTHONNOUSERSITE=1 HF_HOME="$REPO/cache/hf"
+export TOKENIZERS_PARALLELISM=false
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export MIN_FREE_MIB="${MIN_FREE_MIB:-10000}"
+
+RUNS="${RUNS:?set RUNS=colon-separated-args (x-separated for multiple runs)}"
+
+# Wait (up to 6h) for a GPU with >= MIN_FREE_MIB free instead of falling
+# through with an empty CUDA_VISIBLE_DEVICES (train.py would run on CPU).
+CVD=""
+for _ in $(seq 1 72); do
+    CVD=$(bash scripts/pick_gpu.sh 1) && [ -n "$CVD" ] && break
+    echo "no GPU with >=${MIN_FREE_MIB}MiB free; retrying in 300s"
+    sleep 300
+done
+[ -n "$CVD" ] || { echo "FATAL: no GPU freed up within 6h"; exit 1; }
+export CUDA_VISIBLE_DEVICES="$CVD"
+echo "host=$(hostname) gpu=$CUDA_VISIBLE_DEVICES"
+nvidia-smi --query-gpu=index,memory.free --format=csv,noheader
+
+for RUN in $(echo "$RUNS" | tr '@' ' '); do
+    ARGS=$(echo "$RUN" | tr ':' ' ')
+    # run name for the log = value after --out
+    NAME=$(echo "$ARGS" | sed -n 's/.*--out \([^ ]*\).*/\1/p' | tr '/' '_')
+    echo "===== train.py $ARGS ====="
+    python code/projB/train.py $ARGS 2>&1 | tee "pbs_logs/${NAME:-projB_run}.log"
+done
+echo "===== all runs done ====="

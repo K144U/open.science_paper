@@ -1,0 +1,31 @@
+#!/bin/bash
+# Project B - Phase-2 mechanistic probe (probe.py) on a trained checkpoint.
+# ARGS = colon-separated CLI args (':' -> space; NO commas -> qsub -v eats them).
+#   qsub -v ARGS="--ckpt:runs/s5_logc2_curr32/ckpt_final.pt:--task:s5:--n:16:--out:runs/s5_logc2_curr32/probe_n16.json" \
+#        scripts/run_projB_probe.pbs
+#PBS -q gpu
+#PBS -l select=1:ncpus=8
+#PBS -l walltime=3:00:00
+#PBS -N projB_probe
+#PBS -j oe
+#PBS -o ${REPO}/pbs_logs/projB_probe.pbs.out
+
+set -uo pipefail
+REPO=${REPO:-$(pwd)}
+cd "$REPO"; mkdir -p pbs_logs
+
+source /cm/shared/apps/anaconda3/etc/profile.d/conda.sh
+conda activate "$REPO/.conda/envs/loopedlm"
+export PYTHONNOUSERSITE=1 TOKENIZERS_PARALLELISM=false
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export MIN_FREE_MIB="${MIN_FREE_MIB:-8000}"
+
+ARGS="${ARGS:?set ARGS=colon-separated probe.py args}"
+export CUDA_VISIBLE_DEVICES=$(bash scripts/pick_gpu.sh 1)
+echo "host=$(hostname) gpu=$CUDA_VISIBLE_DEVICES"
+nvidia-smi --query-gpu=index,memory.free,utilization.gpu --format=csv,noheader
+
+NAME=$(echo "$ARGS" | sed -n 's/.*--out \([^ ]*\).*/\1/p' | tr '/' '_')
+python code/projB/probe.py $(echo "$ARGS" | tr ':' ' ') 2>&1 \
+    | tee "pbs_logs/${NAME:-projB_probe}.log"
+echo "===== probe done ====="
