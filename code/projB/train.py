@@ -57,6 +57,24 @@ def curr_n_max(step: int, args) -> int:
     if args.curriculum_frac <= 0:
         return args.n_max
     frac = min(1.0, step / max(1.0, args.curriculum_frac * args.steps))
+
+    # --curriculum-shape reshapes the ramp WITHOUT changing where it starts,
+    # where it ends, or when it tops out, so the ablation isolates shape alone.
+    # The paper's Limitations previously conceded shape was never varied.
+    shape = getattr(args, "curriculum_shape", "linear")
+    if shape == "exp":
+        # slow at first, then fast: stays short for longer, so the scan has
+        # more time to establish before the budget becomes binding.
+        frac = frac ** 2
+    elif shape == "log":
+        # fast at first, then slow: reaches long lengths early.
+        frac = math.sqrt(frac)
+    elif shape == "step":
+        # three discrete jumps rather than a smooth ramp.
+        frac = math.floor(frac * 3.0 + 1e-9) / 3.0
+    elif shape != "linear":
+        raise ValueError("unknown curriculum shape %r" % shape)
+
     return int(round(args.n_curr_start + frac * (args.n_max - args.n_curr_start)))
 
 
@@ -70,6 +88,14 @@ def schedule_T(schedule: str, n: int, rng: np.random.Generator,
         return max(1, math.ceil(log_c * math.log2(n)))
     if schedule == "const":
         return T_const
+    if schedule == "const_jitter":
+        # Depth sampled around a FIXED mean, independent of sequence length.
+        # This is Huginn's contract: it has training-depth VARIANCE but no
+        # scaling with n.  Together with const (no variance, no scaling) and
+        # uniform_n (variance and scaling) it completes the 2x2 that separates
+        # which of the two actually buys test-time loop tolerance.
+        lo = max(1, T_const // 2)
+        return int(rng.integers(lo, 2 * T_const + 1))
     raise ValueError(f"unknown schedule {schedule!r}")
 
 
@@ -259,7 +285,7 @@ def parse_args(argv=None):
     p.add_argument("--prelude", type=int, default=0)
     p.add_argument("--coda", type=int, default=0)
     p.add_argument("--loop-schedule", default="fixed_n",
-                   choices=["fixed_n", "uniform_n", "log_n", "const"])
+                   choices=["fixed_n", "uniform_n", "log_n", "const", "const_jitter"])
     p.add_argument("--log-c", type=float, default=2.0)
     p.add_argument("--T-const", type=int, default=32)
     p.add_argument("--holdout-frac", type=float, default=0.05)
@@ -268,6 +294,10 @@ def parse_args(argv=None):
     p.add_argument("--curriculum-frac", type=float, default=0.0,
                    help="ramp length ceiling over this fraction of steps "
                         "(0 = off); needed for S5/A5 from scratch")
+    p.add_argument("--curriculum-shape", default="linear",
+                   choices=["linear", "exp", "log", "step"],
+                   help="ramp shape; start, end and top-out step are "
+                        "unchanged, so this isolates shape alone")
     p.add_argument("--n-curr-start", type=int, default=8,
                    help="curriculum starting length ceiling")
     p.add_argument("--batch", type=int, default=64)

@@ -10,7 +10,14 @@
 #   qsub -v RUNS="<run1>@<run2>@<run3>" ...   # sequential runs, one GPU
 # Small models (5-50M) — MIN_FREE_MIB default 10000 is plenty.
 #PBS -q gpu
-#PBS -l select=1:ncpus=8
+# NOTE 2026-08-19: ncpus=1, measured, not guessed.  train.py/eval_loops.py
+# have no DataLoader and no worker processes (batches are generated inline by
+# single-threaded NumPy).  Measured on jiit-gpu01: each python process sits at
+# 97.8% CPU, i.e. under ONE core, with its extra threads idle CUDA plumbing.
+# The GPU node runs at 95/96 cores RESERVED but only ~41 busy, so cpus are the
+# scarce resource purely by reservation; every core we over-request is a slot
+# we cannot use.  ncpus=2 wasted half our allocation.  Do not raise this.
+#PBS -l select=1:ncpus=1
 #PBS -l walltime=10:00:00
 #PBS -N projB_train
 #PBS -j oe
@@ -22,6 +29,7 @@ cd "$REPO"; mkdir -p pbs_logs runs
 
 source /cm/shared/apps/anaconda3/etc/profile.d/conda.sh
 conda activate "$REPO/.conda/envs/loopedlm"
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 export PYTHONNOUSERSITE=1 HF_HOME="$REPO/cache/hf"
 export TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True

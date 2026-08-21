@@ -1,0 +1,54 @@
+#!/bin/bash
+# Project B E1 - pretrained-LM bridge depth sweep (bridge_depth.py).
+#
+# ARGS = colon-separated CLI args (':' -> space).  qsub -v splits on commas, so
+# NO commas may appear in ARGS.  --lengths and --depths therefore travel as
+# LENGTHS and DEPTHS with '@' separators and are converted here.
+#
+#   qsub -v ARGS="--model:huginn:--pilot:--out:runs/e1/pilot_huginn.json",\
+#           LENGTHS="1@2@3@4@6" scripts/run_projB_bridge.pbs
+#
+#PBS -q gpu
+#PBS -l select=1:ncpus=2
+#PBS -l walltime=4:00:00
+#PBS -N projB_bridge
+#PBS -j oe
+#PBS -o ${REPO}/pbs_logs/projB_bridge.pbs.out
+
+set -uo pipefail
+REPO=${REPO:-$(pwd)}
+cd "$REPO"; mkdir -p pbs_logs runs/e1
+
+source /cm/shared/apps/anaconda3/etc/profile.d/conda.sh
+conda activate "$REPO/.conda/envs/loopedlm"
+export PYTHONNOUSERSITE=1 TOKENIZERS_PARALLELISM=false
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+# Both models live in the repo-local HF cache; never hit the network.
+export HF_HOME="$REPO/cache/hf"
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+# Huginn is a 3.5B bf16 model, so it needs real headroom, unlike the 5M runs.
+export MIN_FREE_MIB="${MIN_FREE_MIB:-20000}"
+
+ARGS="${ARGS:?set ARGS=colon-separated bridge_depth.py args}"
+LENGTHS="${LENGTHS:-}"
+DEPTHS="${DEPTHS:-}"
+
+CVD=""
+for _ in $(seq 1 72); do
+    CVD=$(bash scripts/pick_gpu.sh 1) && [ -n "$CVD" ] && break
+    echo "no GPU with >=${MIN_FREE_MIB}MiB free; retrying in 300s"
+    sleep 300
+done
+[ -n "$CVD" ] || { echo "FATAL: no GPU freed up within 6h"; exit 1; }
+export CUDA_VISIBLE_DEVICES="$CVD"
+echo "host=$(hostname) gpu=$CUDA_VISIBLE_DEVICES"
+nvidia-smi --query-gpu=index,memory.free --format=csv,noheader
+
+EXTRA=""
+[ -n "$LENGTHS" ] && EXTRA="$EXTRA --lengths $(echo "$LENGTHS" | tr '@' ',')"
+[ -n "$DEPTHS" ]  && EXTRA="$EXTRA --depths  $(echo "$DEPTHS"  | tr '@' ',')"
+
+NAME=$(echo "$ARGS" | sed -n 's/.*--out \([^ ]*\).*/\1/p' | tr '/' '_')
+python code/projB/bridge_depth.py $(echo "$ARGS" | tr ':' ' ') $EXTRA 2>&1 \
+    | tee "pbs_logs/${NAME:-projB_bridge}.log"
+echo "===== bridge done ====="

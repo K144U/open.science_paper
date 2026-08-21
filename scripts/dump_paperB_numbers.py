@@ -1,4 +1,4 @@
-"""Dump every number Paper B cites into paper/results_summary.txt (LOCAL).
+"""Dump every number Paper B cites into paperB/results_summary.txt (LOCAL).
 
 Walks runs/*/loops_vs_length.json and runs/*/probe_n16.json (+ probe_dyn_*)
 and prints, per run: T*(n) table, linear slope, log2 fit (a*log2 n + b, corr),
@@ -12,7 +12,7 @@ import re
 
 import numpy as np
 
-OUT = "paper/results_summary.txt"
+OUT = "paperB/results_summary.txt"
 lines = []
 
 
@@ -135,6 +135,6 @@ for c, names in [(1.5, GROUPS["S5 c=1.5"]), (2.0, GROUPS["S5 c=2"]),
     p(f"  c={c}: eff={cls.count('eff')}/10 seq={cls.count('seq')} "
       f"mixed={cls.count('mixed')} reach32={r32}/10")
 
-os.makedirs(os.path.dirname(OUT), exist_ok=True)
+os.makedirs("paperB", exist_ok=True)
 open(OUT, "w").write("\n".join(lines) + "\n")
 print(f"\nwrote {OUT}")

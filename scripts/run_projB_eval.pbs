@@ -5,7 +5,14 @@
 #   qsub -v ARGS="--task:s5:--ckpt:runs/s5_curr32_5m/ckpt_final.pt:--out:runs/s5_curr32_5m/loops_vs_length.json" \
 #        scripts/run_projB_eval.pbs
 #PBS -q gpu
-#PBS -l select=1:ncpus=8
+# NOTE 2026-08-19: ncpus=1, measured, not guessed.  train.py/eval_loops.py
+# have no DataLoader and no worker processes (batches are generated inline by
+# single-threaded NumPy).  Measured on jiit-gpu01: each python process sits at
+# 97.8% CPU, i.e. under ONE core, with its extra threads idle CUDA plumbing.
+# The GPU node runs at 95/96 cores RESERVED but only ~41 busy, so cpus are the
+# scarce resource purely by reservation; every core we over-request is a slot
+# we cannot use.  ncpus=2 wasted half our allocation.  Do not raise this.
+#PBS -l select=1:ncpus=1
 #PBS -l walltime=2:00:00
 #PBS -N projB_eval
 #PBS -j oe
@@ -17,6 +24,7 @@ cd "$REPO"; mkdir -p pbs_logs
 
 source /cm/shared/apps/anaconda3/etc/profile.d/conda.sh
 conda activate "$REPO/.conda/envs/loopedlm"
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 export PYTHONNOUSERSITE=1 TOKENIZERS_PARALLELISM=false
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export MIN_FREE_MIB="${MIN_FREE_MIB:-10000}"

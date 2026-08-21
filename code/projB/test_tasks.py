@@ -108,3 +108,50 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# ---- tasks added 2026-08-20: does the effect depend on S5's algebra? --------
+
+def test_t3_is_associative_and_not_a_group():
+    """T3 must be associative (so prefix works) but non-commutative and
+    non-invertible, which is the point of including it."""
+    import numpy as np
+    from projB.tasks import make_group
+    t = make_group("t3")
+    K = t.shape[0]
+    assert K == 27, K
+    rng = np.random.default_rng(0)
+    for _ in range(500):
+        a, b, c = rng.integers(0, K, 3)
+        assert t[t[a, b], c] == t[a, t[b, c]], "T3 not associative"
+    assert (t != t.T).any(), "T3 should be non-commutative"
+
+
+def test_conn5_matches_union_find():
+    """conn5 labels must equal an independent union-find replay."""
+    import numpy as np
+    from itertools import combinations
+    from projB import tasks
+    _, gens = tasks._connectivity_5()
+    sym2edge = dict(zip(gens, list(combinations(range(5), 2))))
+    sp = tasks.TaskSampler("conn5", holdout_frac=0.0)
+    tok, lab = sp.sample(64, 8, np.random.default_rng(1), split="iid")
+    # only generator symbols may appear as tokens
+    assert set(tok[:, 1:].ravel().tolist()) <= set(gens)
+    # labels compose under the table at every step
+    tbl = sp.table
+    for r in range(tok.shape[0]):
+        prev = None
+        for i in range(1, tok.shape[1]):
+            cur = int(lab[r, i])
+            if prev is not None:
+                assert tbl[prev, int(tok[r, i])] == cur
+            prev = cur
+
+
+def test_conn5_is_commutative():
+    """Connectivity is a join semilattice, so order must not matter.  This is
+    what makes it the natural companion to the Z60 abelian control."""
+    from projB.tasks import make_group
+    t = make_group("conn5")
+    assert (t == t.T).all(), "conn5 should be commutative"

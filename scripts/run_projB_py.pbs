@@ -1,0 +1,44 @@
+#!/bin/bash
+# Generic Project B GPU runner: run any code/projB script on one GPU.
+#
+#   SCRIPT = module file under code/projB (e.g. bridge_diag.py)
+#   ARGS   = colon-separated CLI args (':' -> space).  NO commas: qsub -v eats
+#            them.  Use a separate variable with '@' if a value needs commas.
+#
+#   qsub -v SCRIPT=bridge_diag.py,ARGS="--model:huginn" scripts/run_projB_py.pbs
+#
+#PBS -q gpu
+#PBS -l select=1:ncpus=2
+#PBS -l walltime=2:00:00
+#PBS -N projB_py
+#PBS -j oe
+#PBS -o ${REPO}/pbs_logs/projB_py.pbs.out
+
+set -uo pipefail
+REPO=${REPO:-$(pwd)}
+cd "$REPO"; mkdir -p pbs_logs runs/e1
+
+source /cm/shared/apps/anaconda3/etc/profile.d/conda.sh
+conda activate "$REPO/.conda/envs/loopedlm"
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
+export PYTHONNOUSERSITE=1 TOKENIZERS_PARALLELISM=false
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export HF_HOME="$REPO/cache/hf"
+export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
+export MIN_FREE_MIB="${MIN_FREE_MIB:-20000}"
+
+SCRIPT="${SCRIPT:?set SCRIPT=<file under code/projB>}"
+ARGS="${ARGS:-}"
+
+CVD=""
+for _ in $(seq 1 72); do
+    CVD=$(bash scripts/pick_gpu.sh 1) && [ -n "$CVD" ] && break
+    echo "no GPU with >=${MIN_FREE_MIB}MiB free; retrying in 300s"
+    sleep 300
+done
+[ -n "$CVD" ] || { echo "FATAL: no GPU freed up within 6h"; exit 1; }
+export CUDA_VISIBLE_DEVICES="$CVD"
+echo "host=$(hostname) gpu=$CUDA_VISIBLE_DEVICES script=$SCRIPT"
+
+python "code/projB/$SCRIPT" $(echo "$ARGS" | tr ':' ' ') 2>&1
+echo "===== $SCRIPT done ====="

@@ -1,0 +1,50 @@
+#!/bin/bash
+# Project B - causal damage cones by activation patching (patch_loops.py).
+#
+# ARGS = colon-separated CLI args (':' -> space).  qsub -v splits on commas, so
+# NO commas may appear anywhere in ARGS.  The one option that naturally wants
+# commas is --lengths, so it is passed separately as LENGTHS with '@' as the
+# separator and converted here.
+#
+#   qsub -v ARGS="--task:s5:--ckpt:runs/X/ckpt_final.pt:--out:runs/X/damage_cones.json",\
+#           LENGTHS="8@16@24@32" scripts/run_projB_patch.pbs
+#
+#PBS -q gpu
+# ncpus=1, measured; see the note in run_projB_train.pbs.  Patching is
+# forward-only and single-threaded.
+#PBS -l select=1:ncpus=1
+#PBS -l walltime=3:00:00
+#PBS -N projB_patch
+#PBS -j oe
+#PBS -o ${REPO}/pbs_logs/projB_patch.pbs.out
+
+set -uo pipefail
+REPO=${REPO:-$(pwd)}
+cd "$REPO"; mkdir -p pbs_logs
+
+source /cm/shared/apps/anaconda3/etc/profile.d/conda.sh
+conda activate "$REPO/.conda/envs/loopedlm"
+export OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
+export PYTHONNOUSERSITE=1 TOKENIZERS_PARALLELISM=false
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export MIN_FREE_MIB="${MIN_FREE_MIB:-8000}"
+
+ARGS="${ARGS:?set ARGS=colon-separated patch_loops.py args}"
+LENGTHS="${LENGTHS:-8@16@24@32}"
+
+CVD=""
+for _ in $(seq 1 72); do
+    CVD=$(bash scripts/pick_gpu.sh 1) && [ -n "$CVD" ] && break
+    echo "no GPU with >=${MIN_FREE_MIB}MiB free; retrying in 300s"
+    sleep 300
+done
+[ -n "$CVD" ] || { echo "FATAL: no GPU freed up within 6h"; exit 1; }
+export CUDA_VISIBLE_DEVICES="$CVD"
+echo "host=$(hostname) gpu=$CUDA_VISIBLE_DEVICES"
+nvidia-smi --query-gpu=index,memory.free --format=csv,noheader
+
+NAME=$(echo "$ARGS" | sed -n 's/.*--out \([^ ]*\).*/\1/p' | tr '/' '_')
+python code/projB/patch_loops.py $(echo "$ARGS" | tr ':' ' ') \
+    --lengths "$(echo "$LENGTHS" | tr '@' ',')" 2>&1 \
+    | tee "pbs_logs/${NAME:-projB_patch}.log"
+echo "===== patch done ====="
